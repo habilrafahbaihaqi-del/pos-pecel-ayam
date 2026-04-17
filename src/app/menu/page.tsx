@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { auth, db } from "@/lib/firebase"; // Jembatan ke Firebase
+import { auth, db } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   collection,
@@ -13,7 +13,7 @@ import {
   onSnapshot,
   query,
   orderBy,
-} from "firebase/firestore"; // Tools CRUD Firestore
+} from "firebase/firestore";
 import {
   Dialog,
   DialogContent,
@@ -33,14 +33,13 @@ import {
   BarChart3,
   History,
   Search,
-  Image as ImageIcon,
   Camera,
   Trash2,
   Loader2,
+  Settings,
 } from "lucide-react";
 import Link from "next/link";
 
-// --- TIPE DATA ---
 type Variant = { name: string; price: number };
 type Product = {
   id: string;
@@ -60,11 +59,17 @@ export default function MenuManagementPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [activeCategory, setActiveCategory] = useState("Semua");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // STATE PROFIL
   const [userRole, setUserRole] = useState("Kasir");
+  const [userName, setUserName] = useState("Kasir");
+  const [userPhoto, setUserPhoto] = useState("");
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<"add" | "edit">("add");
+  const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState<Product>({
     id: "",
     name: "",
@@ -75,19 +80,22 @@ export default function MenuManagementPage() {
     variants: [],
   });
 
-  // 1. CEK STATUS LOGIN & PERAN
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         setUserRole(user.email === "owner@pecelayam.com" ? "Owner" : "Kasir");
+        setUserName(
+          user.displayName ||
+            (user.email === "owner@pecelayam.com" ? "Bos Pecel" : "Kasir"),
+        );
+        setUserPhoto(user.photoURL || "");
       } else {
         router.push("/login");
       }
     });
     return () => unsubscribe();
-  }, []);
+  }, [router]);
 
-  // 2. AMBIL DATA DARI FIREBASE (REAL-TIME)
   useEffect(() => {
     const q = query(collection(db, "products"), orderBy("name", "asc"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -101,7 +109,6 @@ export default function MenuManagementPage() {
     return () => unsubscribe();
   }, []);
 
-  // --- LOGIKA FILTER ---
   const filteredProducts = products.filter((p) => {
     const matchesCat =
       activeCategory === "Semua" || p.category === activeCategory;
@@ -111,7 +118,6 @@ export default function MenuManagementPage() {
     return matchesCat && matchesSearch;
   });
 
-  // --- FUNGSI CRUD ---
   const handleOpenAdd = () => {
     setModalMode("add");
     setFormData({
@@ -138,13 +144,14 @@ export default function MenuManagementPage() {
       const reader = new FileReader();
       reader.onloadend = () =>
         setFormData({ ...formData, img: reader.result as string });
-      reader.readAsDataURL(file); // Simpan sebagai Base64 untuk sementara
+      reader.readAsDataURL(file);
     }
   };
 
   const handleSave = async () => {
-    if (!formData.name || !formData.img) return alert("Lengkapi data!");
-    setIsLoading(true);
+    if (!formData.name || !formData.img)
+      return alert("Nama dan Foto wajib diisi!");
+    setIsSaving(true);
 
     try {
       const payload = {
@@ -166,26 +173,25 @@ export default function MenuManagementPage() {
       setIsModalOpen(false);
     } catch (err) {
       console.error(err);
-      alert("Gagal menyimpan ke Firebase");
+      alert("Gagal menyimpan produk ke database.");
     } finally {
-      setIsLoading(false);
+      setIsSaving(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (confirm("Hapus produk ini?")) {
+    if (confirm("Hapus produk ini secara permanen?")) {
       try {
         await deleteDoc(doc(db, "products", id));
       } catch (err) {
-        alert("Gagal menghapus");
+        alert("Gagal menghapus produk.");
       }
     }
   };
 
-  // --- UI HELPERS ---
   const renderImg = (img: string, size: string) => (
     <div
-      className={`${size} bg-[#F8F5F0] rounded-[18px] flex items-center justify-center overflow-hidden shadow-inner`}
+      className={`${size} bg-[#F8F5F0] rounded-[18px] flex items-center justify-center overflow-hidden shadow-inner shrink-0`}
     >
       {img?.length > 10 ? (
         <img src={img} className="w-full h-full object-cover" />
@@ -198,17 +204,25 @@ export default function MenuManagementPage() {
   return (
     <div className="min-h-screen bg-[#E5E5E5] flex justify-center font-sans">
       <div className="w-full max-w-[420px] bg-[#FAF7F2] min-h-screen relative pb-32 shadow-xl overflow-hidden">
-        {/* HEADER */}
+        {/* HEADER PERSONALISASI */}
         <div className="flex items-center justify-between p-6 bg-white rounded-b-[40px] shadow-sm mb-4">
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-slate-800 rounded-full flex items-center justify-center border-2 border-[#F15A2B]">
-              <User className="text-white h-6 w-6" />
+            <div className="w-12 h-12 bg-[#F8F5F0] rounded-full flex items-center justify-center border-2 border-[#F15A2B] overflow-hidden shadow-inner">
+              {userPhoto ? (
+                <img
+                  src={userPhoto}
+                  alt="Profile"
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <User className="text-[#F15A2B] h-6 w-6" />
+              )}
             </div>
             <div>
-              <p className="text-[10px] font-bold text-[#8C8C8C] tracking-widest uppercase">
-                Peran: {userRole}
+              <p className="text-[11px] font-bold text-[#8C8C8C] uppercase tracking-wide">
+                Hi, {userName}! 👋
               </p>
-              <h2 className="text-[#9A2D0D] font-heading font-bold text-lg italic tracking-tight">
+              <h2 className="text-[#9A2D0D] font-heading font-black text-xl italic tracking-tight leading-tight">
                 Point of Sales
               </h2>
             </div>
@@ -218,7 +232,7 @@ export default function MenuManagementPage() {
               auth.signOut();
               router.push("/login");
             }}
-            className="bg-[#F5EDEB] p-3 rounded-full text-[#9A2D0D] cursor-pointer active:scale-95 transition"
+            className="bg-[#F5EDEB] p-3 rounded-full text-[#9A2D0D] cursor-pointer hover:bg-[#EADCD8] transition active:scale-95"
           >
             <LogOut className="h-6 w-6" />
           </div>
@@ -248,7 +262,7 @@ export default function MenuManagementPage() {
           <Input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-11 rounded-full border-none bg-white shadow-sm h-12"
+            className="pl-11 rounded-full border-none bg-white shadow-sm h-12 focus-visible:ring-1 focus-visible:ring-[#F15A2B]"
             placeholder="Cari nama produk..."
           />
         </div>
@@ -293,13 +307,13 @@ export default function MenuManagementPage() {
                 <div className="flex flex-col gap-2">
                   <button
                     onClick={() => handleOpenEdit(p)}
-                    className="w-8 h-8 bg-[#F5EDEB] text-[#9A2D0D] rounded-full flex items-center justify-center hover:bg-[#F15A2B] hover:text-white transition"
+                    className="w-8 h-8 bg-[#F5EDEB] text-[#9A2D0D] rounded-full flex items-center justify-center hover:bg-[#F15A2B] hover:text-white transition active:scale-95"
                   >
                     <Edit3 size={14} />
                   </button>
                   <button
                     onClick={() => handleDelete(p.id)}
-                    className="w-8 h-8 bg-red-50 text-red-500 rounded-full flex items-center justify-center hover:bg-red-500 hover:text-white transition"
+                    className="w-8 h-8 bg-red-50 text-red-500 rounded-full flex items-center justify-center hover:bg-red-500 hover:text-white transition active:scale-95"
                   >
                     <Trash2 size={14} />
                   </button>
@@ -311,14 +325,15 @@ export default function MenuManagementPage() {
 
         {/* MODAL FORM */}
         <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-          <DialogContent className="w-[95%] max-w-[400px] rounded-[32px] bg-white p-6 border-none shadow-2xl max-h-[90vh] flex flex-col">
-            <DialogHeader>
+          <DialogContent className="w-[95%] max-w-[400px] rounded-[32px] bg-white p-0 border-none shadow-2xl max-h-[85vh] flex flex-col overflow-hidden">
+            <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
               <DialogTitle className="text-2xl font-black text-[#2D2D2D]">
                 {modalMode === "add" ? "Tambah Menu" : "Edit Menu"}
               </DialogTitle>
             </DialogHeader>
-            <ScrollArea className="flex-1 pr-2">
-              <div className="space-y-4 py-2">
+
+            <div className="flex-1 overflow-y-auto px-6 min-h-0 pb-4">
+              <div className="space-y-4 pt-2">
                 <div className="flex flex-col items-center gap-2">
                   <input
                     type="file"
@@ -334,22 +349,29 @@ export default function MenuManagementPage() {
                     {renderImg(formData.img, "w-32 h-32")}
                     <div className="absolute inset-0 bg-black/40 rounded-[18px] opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center text-white transition">
                       <Camera size={24} />
-                      <span className="text-[10px] font-bold">UBAH FOTO</span>
+                      <span className="text-[10px] font-bold mt-1">
+                        UBAH FOTO
+                      </span>
                     </div>
                   </div>
+                  <p className="text-[10px] text-[#8C8C8C]">
+                    Maks. ukuran foto 500KB
+                  </p>
                 </div>
+
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-[#8C8C8C] uppercase">
-                    Nama
+                    Nama Menu
                   </label>
                   <Input
                     value={formData.name}
                     onChange={(e) =>
                       setFormData({ ...formData, name: e.target.value })
                     }
-                    className="bg-[#F8F5F0] border-none h-12 rounded-2xl"
+                    className="bg-[#F8F5F0] border-none h-12 rounded-2xl focus-visible:ring-1 focus-visible:ring-[#F15A2B]"
                   />
                 </div>
+
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-[#8C8C8C] uppercase">
                     Kategori
@@ -359,7 +381,7 @@ export default function MenuManagementPage() {
                     onChange={(e) =>
                       setFormData({ ...formData, category: e.target.value })
                     }
-                    className="w-full bg-[#F8F5F0] border-none h-12 rounded-2xl px-4 text-sm focus:ring-1 focus:ring-[#F15A2B]"
+                    className="w-full bg-[#F8F5F0] border-none h-12 rounded-2xl px-4 text-sm focus:ring-1 focus:ring-[#F15A2B] outline-none"
                   >
                     {categories
                       .filter((c) => c !== "Semua")
@@ -372,7 +394,9 @@ export default function MenuManagementPage() {
                 </div>
 
                 <div className="flex items-center justify-between bg-[#F8F5F0] p-4 rounded-2xl">
-                  <span className="text-sm font-bold">Varian?</span>
+                  <span className="text-sm font-bold text-[#2D2D2D]">
+                    Punya Varian? (Dada/Paha)
+                  </span>
                   <input
                     type="checkbox"
                     className="w-5 h-5 accent-[#F15A2B]"
@@ -389,7 +413,7 @@ export default function MenuManagementPage() {
                 {!formData.hasVariants ? (
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-[#8C8C8C] uppercase">
-                      Harga
+                      Harga Dasar
                     </label>
                     <Input
                       type="number"
@@ -400,22 +424,25 @@ export default function MenuManagementPage() {
                           price: parseInt(e.target.value) || 0,
                         })
                       }
-                      className="bg-[#F8F5F0] border-none h-12 rounded-2xl"
+                      className="bg-[#F8F5F0] border-none h-12 rounded-2xl focus-visible:ring-1 focus-visible:ring-[#F15A2B]"
                     />
                   </div>
                 ) : (
-                  <div className="space-y-3 border border-dashed border-[#F15A2B] p-4 rounded-2xl">
+                  <div className="space-y-3 border-2 border-dashed border-[#F15A2B]/30 p-4 rounded-2xl bg-[#FFF9F8]">
+                    <label className="text-[10px] font-bold text-[#F15A2B] uppercase">
+                      Daftar Varian & Harga
+                    </label>
                     {formData.variants.map((v, i) => (
-                      <div key={i} className="flex gap-2">
+                      <div key={i} className="flex gap-2 items-center">
                         <Input
-                          placeholder="Nama"
+                          placeholder="Nama (Cth: Dada)"
                           value={v.name}
                           onChange={(e) => {
                             const nv = [...formData.variants];
                             nv[i].name = e.target.value;
                             setFormData({ ...formData, variants: nv });
                           }}
-                          className="bg-[#F8F5F0] border-none h-10 text-xs"
+                          className="bg-white border-[#F0EBE1] h-11 text-xs focus-visible:ring-1 focus-visible:ring-[#F15A2B]"
                         />
                         <Input
                           type="number"
@@ -426,7 +453,7 @@ export default function MenuManagementPage() {
                             nv[i].price = parseInt(e.target.value) || 0;
                             setFormData({ ...formData, variants: nv });
                           }}
-                          className="w-24 bg-[#F8F5F0] border-none h-10 text-xs"
+                          className="w-28 bg-white border-[#F0EBE1] h-11 text-xs focus-visible:ring-1 focus-visible:ring-[#F15A2B]"
                         />
                         <button
                           onClick={() =>
@@ -437,7 +464,7 @@ export default function MenuManagementPage() {
                               ),
                             })
                           }
-                          className="text-red-500"
+                          className="text-red-400 hover:text-red-600 bg-red-50 p-2 rounded-xl active:scale-95"
                         >
                           <Trash2 size={16} />
                         </button>
@@ -454,62 +481,108 @@ export default function MenuManagementPage() {
                         })
                       }
                       variant="outline"
-                      className="w-full text-xs h-10 border-[#F15A2B] text-[#F15A2B]"
+                      className="w-full text-xs h-11 border-[#F15A2B] text-[#F15A2B] hover:bg-[#F15A2B] hover:text-white transition bg-transparent"
                     >
-                      + Varian
+                      + Tambah Varian Lain
                     </Button>
                   </div>
                 )}
               </div>
-            </ScrollArea>
-            <Button
-              onClick={handleSave}
-              disabled={isLoading}
-              className="w-full h-14 bg-gradient-to-r from-[#F15A2B] to-[#EC6340] rounded-full text-lg font-bold mt-4 shadow-lg"
-            >
-              {isLoading ? (
-                <Loader2 className="animate-spin" />
-              ) : (
-                "Simpan Produk"
-              )}
-            </Button>
+            </div>
+
+            <div className="p-6 bg-white border-t border-[#F0EBE1] shadow-[0_-10px_20px_rgba(0,0,0,0.02)] shrink-0 z-10">
+              <Button
+                onClick={handleSave}
+                disabled={isSaving}
+                className="w-full h-14 bg-gradient-to-r from-[#F15A2B] to-[#EC6340] rounded-full text-lg font-bold shadow-lg hover:brightness-110 active:scale-95 transition"
+              >
+                {isSaving ? (
+                  <Loader2 className="animate-spin" />
+                ) : (
+                  "Simpan Produk"
+                )}
+              </Button>
+            </div>
           </DialogContent>
         </Dialog>
 
         {/* NAVBAR BAWAH */}
-        <div className="fixed bottom-0 w-full max-w-[420px] bg-gradient-to-t from-[#FAF7F2] via-[#FAF7F2] to-transparent pt-12 pb-6 px-6 z-50">
-          <div className="bg-white shadow-[0_10px_40px_rgba(0,0,0,0.08)] rounded-[32px] p-2 flex justify-between items-center border border-[#F0EBE1] relative h-20">
-            <Link
-              href="/pos"
-              className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/4 hover:text-[#9A2D0D] transition"
-            >
-              <Calculator className="h-6 w-6 mb-1" />
-              <span className="text-[10px] font-bold">Kasir</span>
-            </Link>
-            <div className="w-1/4 flex flex-col items-center justify-center relative">
-              <div className="absolute -top-14 bg-gradient-to-b from-[#F15A2B] to-[#D23F10] w-16 h-16 rounded-full flex items-center justify-center text-white shadow-[0_8px_20px_rgba(241,90,43,0.4)] border-4 border-[#FAF7F2] animate-in zoom-in-75 slide-in-from-bottom-6 duration-500">
-                <Utensils className="h-7 w-7" />
+        {userRole === "Owner" ? (
+          <div className="fixed bottom-0 w-full max-w-[420px] bg-gradient-to-t from-[#FAF7F2] via-[#FAF7F2] to-transparent pt-12 pb-6 px-6 z-50">
+            <div className="bg-white shadow-[0_10px_40px_rgba(0,0,0,0.08)] rounded-[32px] p-2 flex justify-between items-center border border-[#F0EBE1] relative h-20">
+              <Link
+                href="/pos"
+                className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/5 hover:text-[#9A2D0D] transition"
+              >
+                <Calculator className="h-5 w-5 mb-1" />
+                <span className="text-[9px] font-bold">Kasir</span>
+              </Link>
+
+              <div className="w-1/5 flex flex-col items-center justify-center relative transition">
+                <div className="absolute -top-12 bg-gradient-to-b from-[#F15A2B] to-[#D23F10] w-14 h-14 rounded-full flex items-center justify-center text-white shadow-[0_8px_20px_rgba(241,90,43,0.4)] border-4 border-[#FAF7F2] animate-in zoom-in-75 slide-in-from-bottom-6 duration-500 ease-out">
+                  <Utensils className="h-6 w-6" />
+                </div>
+                <span className="mt-8 text-[#9A2D0D] text-[9px] font-extrabold tracking-wide animate-in fade-in duration-500">
+                  Menu
+                </span>
               </div>
-              <span className="mt-8 text-[#9A2D0D] text-[10px] font-extrabold tracking-wide">
-                Menu
-              </span>
+
+              <Link
+                href="/dashboard"
+                className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/5 hover:text-[#9A2D0D] transition"
+              >
+                <BarChart3 className="h-5 w-5 mb-1" />
+                <span className="text-[9px] font-bold">Laporan</span>
+              </Link>
+              <Link
+                href="/riwayat"
+                className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/5 hover:text-[#9A2D0D] transition"
+              >
+                <History className="h-5 w-5 mb-1" />
+                <span className="text-[9px] font-bold">Riwayat</span>
+              </Link>
+              <Link
+                href="/pengaturan"
+                className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/5 hover:text-[#9A2D0D] transition"
+              >
+                <Settings className="h-5 w-5 mb-1" />
+                <span className="text-[9px] font-bold">Setelan</span>
+              </Link>
             </div>
-            <Link
-              href="/dashboard"
-              className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/4 hover:text-[#9A2D0D] transition"
-            >
-              <BarChart3 className="h-6 w-6 mb-1" />
-              <span className="text-[10px] font-bold">Laporan</span>
-            </Link>
-            <Link
-              href="/riwayat"
-              className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/4 hover:text-[#9A2D0D] transition"
-            >
-              <History className="h-6 w-6 mb-1" />
-              <span className="text-[10px] font-bold">Riwayat</span>
-            </Link>
           </div>
-        </div>
+        ) : (
+          <div className="fixed bottom-0 w-full max-w-[420px] bg-gradient-to-t from-[#FAF7F2] via-[#FAF7F2] to-transparent pt-10 pb-6 px-6 z-50">
+            <div className="bg-white shadow-[0_10px_40px_rgba(0,0,0,0.08)] rounded-[32px] p-2 flex justify-around items-center border border-[#F0EBE1]">
+              <Link
+                href="/pos"
+                className="flex flex-col items-center justify-center text-[#8C8C8C] px-6 py-3 hover:text-[#2D2D2D] transition"
+              >
+                <Calculator className="h-5 w-5 mb-1" />
+                <span className="text-[10px] font-bold tracking-wide">
+                  Kasir
+                </span>
+              </Link>
+              <Link
+                href="/riwayat"
+                className="flex flex-col items-center justify-center text-[#8C8C8C] px-6 py-3 hover:text-[#2D2D2D] transition"
+              >
+                <History className="h-5 w-5 mb-1" />
+                <span className="text-[10px] font-bold tracking-wide">
+                  Riwayat
+                </span>
+              </Link>
+              <Link
+                href="/pengaturan"
+                className="flex flex-col items-center justify-center text-[#8C8C8C] px-6 py-3 hover:text-[#2D2D2D] transition"
+              >
+                <Settings className="h-5 w-5 mb-1" />
+                <span className="text-[10px] font-bold tracking-wide">
+                  Setelan
+                </span>
+              </Link>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

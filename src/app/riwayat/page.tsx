@@ -13,7 +13,7 @@ import {
   orderBy,
   deleteDoc,
   doc,
-} from "firebase/firestore"; // Tambahan deleteDoc dan doc
+} from "firebase/firestore";
 import {
   Dialog,
   DialogContent,
@@ -35,17 +35,16 @@ import {
   Calculator,
   History,
   TrendingUp,
-  TrendingDown,
   ReceiptText,
   Banknote,
   QrCode,
   Printer,
-  XCircle,
   Calendar as CalendarIcon,
   Utensils,
   BarChart3,
   Loader2,
-  Trash2, // Tambahan ikon tempat sampah
+  Trash2,
+  Settings,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -53,7 +52,12 @@ export default function RiwayatPage() {
   const router = useRouter();
   const [transactions, setTransactions] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  // STATE PROFIL
   const [userRole, setUserRole] = useState("Kasir");
+  const [userName, setUserName] = useState("Kasir");
+  const [userPhoto, setUserPhoto] = useState("");
+
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
 
@@ -61,12 +65,17 @@ export default function RiwayatPage() {
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       if (user) {
         setUserRole(user.email === "owner@pecelayam.com" ? "Owner" : "Kasir");
+        setUserName(
+          user.displayName ||
+            (user.email === "owner@pecelayam.com" ? "Bos Pecel" : "Kasir"),
+        );
+        setUserPhoto(user.photoURL || "");
       } else {
         router.push("/login");
       }
     });
     return () => unsubscribeAuth();
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     const q = query(
@@ -77,7 +86,6 @@ export default function RiwayatPage() {
       const data = snapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
-        // Handle Firestore timestamp
         dateObj: doc.data().timestamp?.toDate() || new Date(),
       }));
       setTransactions(data);
@@ -86,9 +94,7 @@ export default function RiwayatPage() {
     return () => unsubscribeDb();
   }, []);
 
-  // --- FUNGSI HAPUS TRANSAKSI ---
   const handleDeleteTransaction = async (id: string) => {
-    // Tampilkan konfirmasi ganda sebelum menghapus
     const isConfirmed = window.confirm(
       "Apakah Anda yakin ingin membatalkan/menghapus transaksi ini? Data pendapatan akan otomatis disesuaikan.",
     );
@@ -96,7 +102,6 @@ export default function RiwayatPage() {
     if (isConfirmed) {
       try {
         await deleteDoc(doc(db, "transactions", id));
-        // Tidak perlu set state manual, karena onSnapshot akan otomatis mendeteksi perubahan dan me-render ulang
       } catch (error) {
         console.error("Gagal menghapus transaksi: ", error);
         alert("Terjadi kesalahan saat menghapus transaksi.");
@@ -104,7 +109,6 @@ export default function RiwayatPage() {
     }
   };
 
-  // Filter berdasarkan tanggal yang dipilih
   const filteredTransactions = transactions.filter(
     (t) =>
       format(t.dateObj, "yyyy-MM-dd") ===
@@ -118,17 +122,25 @@ export default function RiwayatPage() {
   return (
     <div className="min-h-screen bg-[#E5E5E5] flex justify-center font-sans">
       <div className="w-full max-w-[420px] bg-[#FAF7F2] min-h-screen relative pb-32 shadow-xl overflow-hidden">
-        {/* HEADER */}
-        <div className="p-6 bg-white rounded-b-[40px] shadow-sm mb-6 flex justify-between items-center">
+        {/* HEADER PERSONALISASI */}
+        <div className="flex items-center justify-between p-6 bg-white rounded-b-[40px] shadow-sm mb-6">
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-slate-800 rounded-full flex items-center justify-center border-2 border-[#F15A2B]">
-              <User className="text-white h-6 w-6" />
+            <div className="w-12 h-12 bg-[#F8F5F0] rounded-full flex items-center justify-center border-2 border-[#F15A2B] overflow-hidden shadow-inner">
+              {userPhoto ? (
+                <img
+                  src={userPhoto}
+                  alt="Profile"
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <User className="text-[#F15A2B] h-6 w-6" />
+              )}
             </div>
             <div>
-              <p className="text-[10px] font-bold text-[#8C8C8C] uppercase tracking-widest">
-                Peran: {userRole}
+              <p className="text-[11px] font-bold text-[#8C8C8C] uppercase tracking-wide">
+                Hi, {userName}! 👋
               </p>
-              <h2 className="text-[#9A2D0D] font-bold text-lg italic">
+              <h2 className="text-[#9A2D0D] font-heading font-black text-xl italic tracking-tight leading-tight">
                 Point of Sales
               </h2>
             </div>
@@ -274,7 +286,6 @@ export default function RiwayatPage() {
                         })}
                       </p>
                       <div className="flex gap-2">
-                        {/* Tombol Hapus (Batal) */}
                         <Button
                           onClick={() => handleDeleteTransaction(trx.id)}
                           variant="outline"
@@ -298,41 +309,48 @@ export default function RiwayatPage() {
           )}
         </div>
 
-        {/* NAVBAR BAWAH DINAMIS DENGAN ANIMASI */}
+        {/* NAVBAR BAWAH */}
         {userRole === "Owner" ? (
           <div className="fixed bottom-0 w-full max-w-[420px] bg-gradient-to-t from-[#FAF7F2] via-[#FAF7F2] to-transparent pt-12 pb-6 px-6 z-50">
             <div className="bg-white shadow-[0_10px_40px_rgba(0,0,0,0.08)] rounded-[32px] p-2 flex justify-between items-center border border-[#F0EBE1] relative h-20">
               <Link
                 href="/pos"
-                className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/4 hover:text-[#9A2D0D] transition"
+                className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/5 hover:text-[#9A2D0D] transition"
               >
-                <Calculator className="h-6 w-6 mb-1" />
-                <span className="text-[10px] font-bold">Kasir</span>
+                <Calculator className="h-5 w-5 mb-1" />
+                <span className="text-[9px] font-bold">Kasir</span>
               </Link>
               <Link
                 href="/menu"
-                className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/4 hover:text-[#9A2D0D] transition"
+                className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/5 hover:text-[#9A2D0D] transition"
               >
-                <Utensils className="h-6 w-6 mb-1" />
-                <span className="text-[10px] font-bold">Menu</span>
+                <Utensils className="h-5 w-5 mb-1" />
+                <span className="text-[9px] font-bold">Menu</span>
               </Link>
               <Link
                 href="/dashboard"
-                className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/4 hover:text-[#9A2D0D] transition"
+                className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/5 hover:text-[#9A2D0D] transition"
               >
-                <BarChart3 className="h-6 w-6 mb-1" />
-                <span className="text-[10px] font-bold">Laporan</span>
+                <BarChart3 className="h-5 w-5 mb-1" />
+                <span className="text-[9px] font-bold">Laporan</span>
               </Link>
 
-              {/* SLOT RIWAYAT AKTIF (OWNER) */}
-              <div className="w-1/4 flex flex-col items-center justify-center relative transition">
-                <div className="absolute -top-14 bg-gradient-to-b from-[#F15A2B] to-[#D23F10] w-16 h-16 rounded-full flex items-center justify-center text-white shadow-[0_8px_20px_rgba(241,90,43,0.4)] border-4 border-[#FAF7F2] animate-in zoom-in-75 slide-in-from-bottom-6 duration-500 ease-out">
-                  <History className="h-7 w-7" />
+              <div className="w-1/5 flex flex-col items-center justify-center relative transition">
+                <div className="absolute -top-12 bg-gradient-to-b from-[#F15A2B] to-[#D23F10] w-14 h-14 rounded-full flex items-center justify-center text-white shadow-[0_8px_20px_rgba(241,90,43,0.4)] border-4 border-[#FAF7F2] animate-in zoom-in-75 slide-in-from-bottom-6 duration-500 ease-out">
+                  <History className="h-6 w-6" />
                 </div>
-                <span className="mt-8 text-[#9A2D0D] text-[10px] font-extrabold tracking-wide animate-in fade-in duration-500">
+                <span className="mt-8 text-[#9A2D0D] text-[9px] font-extrabold tracking-wide animate-in fade-in duration-500">
                   Riwayat
                 </span>
               </div>
+
+              <Link
+                href="/pengaturan"
+                className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/5 hover:text-[#9A2D0D] transition"
+              >
+                <Settings className="h-5 w-5 mb-1" />
+                <span className="text-[9px] font-bold">Setelan</span>
+              </Link>
             </div>
           </div>
         ) : (
@@ -342,19 +360,28 @@ export default function RiwayatPage() {
                 href="/pos"
                 className="flex flex-col items-center justify-center text-[#8C8C8C] px-6 py-3 hover:text-[#2D2D2D] transition"
               >
-                <Calculator className="h-6 w-6 mb-1" />
-                <span className="text-[11px] font-bold tracking-wide">
+                <Calculator className="h-5 w-5 mb-1" />
+                <span className="text-[10px] font-bold tracking-wide">
                   Kasir
                 </span>
               </Link>
 
-              {/* SLOT RIWAYAT AKTIF (KASIR) */}
               <div className="flex flex-col items-center justify-center bg-[#F15A2B] text-white rounded-[24px] px-6 py-3 shadow-md animate-in zoom-in-90 duration-300 ease-out">
-                <History className="h-6 w-6 mb-1" />
-                <span className="text-[11px] font-bold tracking-wide">
+                <History className="h-5 w-5 mb-1" />
+                <span className="text-[10px] font-bold tracking-wide">
                   Riwayat
                 </span>
               </div>
+
+              <Link
+                href="/pengaturan"
+                className="flex flex-col items-center justify-center text-[#8C8C8C] px-6 py-3 hover:text-[#2D2D2D] transition"
+              >
+                <Settings className="h-5 w-5 mb-1" />
+                <span className="text-[10px] font-bold tracking-wide">
+                  Setelan
+                </span>
+              </Link>
             </div>
           </div>
         )}

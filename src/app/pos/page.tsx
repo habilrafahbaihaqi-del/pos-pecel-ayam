@@ -10,7 +10,7 @@ import {
   onSnapshot,
   addDoc,
   serverTimestamp,
-} from "firebase/firestore"; // Tambahan addDoc & serverTimestamp
+} from "firebase/firestore";
 import {
   Dialog,
   DialogContent,
@@ -22,7 +22,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  LogOut,
   ShoppingCart,
   Plus,
   Minus,
@@ -33,8 +32,9 @@ import {
   Utensils,
   BarChart3,
   Loader2,
-  Banknote, // Tambahan untuk ikon metode pembayaran
-  QrCode, // Tambahan untuk ikon metode pembayaran
+  Banknote,
+  QrCode,
+  Settings, // Ikon Pengaturan
 } from "lucide-react";
 
 type Variant = { name: string; price: number };
@@ -57,20 +57,28 @@ export default function PosPage() {
   const router = useRouter();
   const [cart, setCart] = useState<CartItem[]>([]);
 
+  // STATE NOTIFIKASI (TOAST)
+  const [toast, setToast] = useState({ show: false, msg: "" });
+
+  const showToast = (msg: string) => {
+    setToast({ show: true, msg });
+    setTimeout(() => setToast({ show: false, msg: "" }), 2500); // Hilang otomatis dlm 2.5 detik
+  };
+
   // STATE DATABASE REAL-TIME (Menu)
   const [menuItems, setMenuItems] = useState<Product[]>([]);
   const [isLoadingMenu, setIsLoadingMenu] = useState(true);
 
-  // STATE PERAN (Role)
+  // STATE PERAN & PROFIL
   const [userRole, setUserRole] = useState("Kasir");
+  const [userName, setUserName] = useState("Kasir");
+  const [userPhoto, setUserPhoto] = useState("");
 
-  // STATE MODAL VARIAN
+  // STATE MODAL
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [chosenVariant, setChosenVariant] = useState<Variant | null>(null);
   const [variantQty, setVariantQty] = useState(1);
   const [isVariantOpen, setIsVariantOpen] = useState(false);
-
-  // STATE CHECKOUT PEMBAYARAN
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<"Tunai" | "QRIS">("Tunai");
   const [isProcessing, setIsProcessing] = useState(false);
@@ -78,27 +86,31 @@ export default function PosPage() {
   // 1. MENDETEKSI USER SAAT INI
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user && user.email === "owner@pecelayam.com") {
-        setUserRole("Owner");
+      if (user) {
+        setUserRole(user.email === "owner@pecelayam.com" ? "Owner" : "Kasir");
+        // Ambil nama dan foto dari Firebase Profile, jika kosong pakai default
+        setUserName(
+          user.displayName ||
+            (user.email === "owner@pecelayam.com" ? "Bos Pecel" : "Kasir"),
+        );
+        setUserPhoto(user.photoURL || "");
       } else {
-        setUserRole("Kasir");
+        router.push("/login");
       }
     });
     return () => unsubscribe();
-  }, []);
+  }, [router]);
 
-  // 2. MENGAMBIL DATA MENU DARI FIREBASE SECARA REAL-TIME
+  // 2. MENGAMBIL DATA MENU DARI FIREBASE
   useEffect(() => {
     const unsubscribeDb = onSnapshot(collection(db, "products"), (snapshot) => {
       const productsData = snapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
       })) as Product[];
-
       setMenuItems(productsData);
       setIsLoadingMenu(false);
     });
-
     return () => unsubscribeDb();
   }, []);
 
@@ -122,6 +134,7 @@ export default function PosPage() {
           : item.id === product.id && !item.selectedVariant,
       );
       const price = variant ? variant.price : product.price;
+
       if (existing) {
         return prev.map((item) =>
           (
@@ -148,7 +161,11 @@ export default function PosPage() {
         },
       ];
     });
+
     setIsVariantOpen(false);
+    showToast(
+      `${qty}x ${product.name} ${variant ? `(${variant.name})` : ""} ditambahkan!`,
+    );
   };
 
   const updateQty = (
@@ -174,7 +191,7 @@ export default function PosPage() {
   const totalItems = cart.reduce((sum, item) => sum + item.qty, 0);
   const totalPrice = cart.reduce((sum, item) => sum + item.totalPrice, 0);
 
-  // --- LOGIKA CHECKOUT (SIMPAN KE FIREBASE) ---
+  // --- LOGIKA CHECKOUT ---
   const handleCheckout = async () => {
     if (cart.length === 0) return;
     setIsProcessing(true);
@@ -194,15 +211,13 @@ export default function PosPage() {
         totalItems: totalItems,
         paymentMethod: paymentMethod,
         status: "Berhasil",
+        kasirName: userName, // Menyimpan siapa yang memproses
       };
 
-      // Simpan ke koleksi 'transactions'
       await addDoc(collection(db, "transactions"), transactionData);
-
-      // Reset State
       setCart([]);
       setIsCheckoutOpen(false);
-      alert("Transaksi Berhasil Disimpan!");
+      showToast("Transaksi Berhasil Disimpan! 🎉");
     } catch (err) {
       console.error(err);
       alert("Gagal memproses pembayaran");
@@ -214,135 +229,40 @@ export default function PosPage() {
   return (
     <div className="min-h-screen bg-[#E5E5E5] flex justify-center font-sans">
       <div className="w-full max-w-[420px] bg-[#FAF7F2] min-h-screen relative pb-32 shadow-xl overflow-hidden">
-        {/* HEADER */}
+        {/* NOTIFIKASI TOAST */}
+        {toast.show && (
+          <div className="fixed top-6 left-1/2 -translate-x-1/2 bg-[#2D2D2D] text-white px-5 py-3 rounded-full text-xs font-bold shadow-2xl z-50 animate-in slide-in-from-top-10 fade-in duration-300 flex items-center gap-2 whitespace-nowrap">
+            <Check size={16} className="text-[#A3E635]" /> {toast.msg}
+          </div>
+        )}
+
+        {/* HEADER PERSONALISASI */}
         <div className="flex items-center justify-between p-6 bg-white rounded-b-[40px] shadow-sm mb-6">
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-slate-800 rounded-full flex items-center justify-center border-2 border-[#F15A2B]">
-              <User className="text-white h-6 w-6" />
+            <div className="w-12 h-12 bg-[#F8F5F0] rounded-full flex items-center justify-center border-2 border-[#F15A2B] overflow-hidden shadow-inner">
+              {userPhoto ? (
+                <img
+                  src={userPhoto}
+                  alt="Profile"
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <User className="text-[#F15A2B] h-6 w-6" />
+              )}
             </div>
             <div>
-              <p className="text-[10px] font-bold text-[#8C8C8C] tracking-widest uppercase">
-                Peran: {userRole}
+              <p className="text-[11px] font-bold text-[#8C8C8C] uppercase tracking-wide">
+                Hi, {userName}! 👋
               </p>
-              <h2 className="text-[#9A2D0D] font-heading font-bold text-lg italic tracking-tight">
+              <h2 className="text-[#9A2D0D] font-heading font-black text-xl italic tracking-tight leading-tight">
                 Point of Sales
               </h2>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            {/* KERANJANG */}
-            <Dialog>
-              <DialogTrigger asChild>
-                <div className="relative cursor-pointer bg-[#F5EDEB] p-3 rounded-full hover:bg-[#EADCD8] transition">
-                  <ShoppingCart className="h-6 w-6 text-[#9A2D0D]" />
-                  {totalItems > 0 && (
-                    <Badge className="absolute -top-1 -right-1 bg-[#F15A2B] text-white rounded-full h-5 w-5 flex items-center justify-center text-[10px] border-2 border-white">
-                      {totalItems}
-                    </Badge>
-                  )}
-                </div>
-              </DialogTrigger>
-              <DialogContent className="w-[90%] max-w-[400px] rounded-[32px] bg-white p-6 border-none">
-                <DialogHeader>
-                  <DialogTitle className="font-heading text-2xl font-bold flex items-center gap-2 text-[#2D2D2D]">
-                    <ShoppingCart className="text-[#F15A2B]" /> Pesanan
-                  </DialogTitle>
-                </DialogHeader>
-                <ScrollArea className="h-[250px] mt-4 pr-4">
-                  {cart.length === 0 ? (
-                    <div className="text-center py-10 text-[#8C8C8C]">
-                      Kosong
-                    </div>
-                  ) : (
-                    cart.map((item, i) => (
-                      <div
-                        key={i}
-                        className="mb-4 border-b border-[#F5EDEB] pb-4"
-                      >
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <h4 className="font-bold text-[#2D2D2D]">
-                              {item.name}
-                            </h4>
-                            {item.selectedVariant && (
-                              <p className="text-[10px] font-bold text-[#F15A2B] uppercase tracking-wider">
-                                {item.selectedVariant}
-                              </p>
-                            )}
-                          </div>
-                          <span className="font-bold text-[#2D2D2D]">
-                            Rp {item.totalPrice.toLocaleString("id-ID")}
-                          </span>
-                        </div>
-                        <div className="flex justify-between items-center mt-2">
-                          <span className="text-xs text-[#8C8C8C]">
-                            @ Rp {item.price.toLocaleString("id-ID")}
-                          </span>
-                          <div className="flex items-center gap-3 bg-[#F5EDEB] rounded-full px-2 py-1">
-                            <button
-                              onClick={() =>
-                                updateQty(item.id, item.selectedVariant, -1)
-                              }
-                              className="bg-white rounded-full p-1 active:scale-90 transition"
-                            >
-                              <Minus size={12} />
-                            </button>
-                            <span className="text-xs font-bold w-4 text-center">
-                              {item.qty}
-                            </span>
-                            <button
-                              onClick={() =>
-                                updateQty(item.id, item.selectedVariant, 1)
-                              }
-                              className="bg-white rounded-full p-1 active:scale-90 transition"
-                            >
-                              <Plus size={12} />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </ScrollArea>
-                <div className="mt-4 pt-4 border-t-2 border-dashed border-[#EAEAEA]">
-                  <p className="text-xs font-bold text-[#8C8C8C] mb-1 uppercase">
-                    Total Tagihan
-                  </p>
-                  <h2 className="text-3xl font-black text-[#9A2D0D] mb-6">
-                    Rp {totalPrice.toLocaleString("id-ID")}
-                  </h2>
-                  <Button
-                    onClick={() => setIsCheckoutOpen(true)} // Trigger Modal Checkout
-                    disabled={cart.length === 0}
-                    className="w-full h-14 bg-gradient-to-r from-[#F15A2B] to-[#EC6340] rounded-full text-lg font-bold shadow-lg hover:brightness-110 active:scale-95 transition"
-                  >
-                    Proses Pembayaran
-                  </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
-
-            {/* Tombol Logout */}
-            <div
-              onClick={() => {
-                auth.signOut();
-                router.push("/login");
-              }}
-              className="bg-[#F5EDEB] p-3 rounded-full text-[#9A2D0D] cursor-pointer active:scale-95 transition"
-            >
-              <LogOut className="h-6 w-6" />
             </div>
           </div>
         </div>
 
         {/* KONTEN MENU DARI FIREBASE */}
-        <div className="px-6 mb-6">
-          <h1 className="text-[32px] font-black font-heading text-[#2D2D2D]">
-            Menu
-          </h1>
-        </div>
-
-        <div className="px-6 pb-6">
+        <div className="px-6 pb-6 mt-4">
           {isLoadingMenu ? (
             <div className="flex flex-col items-center justify-center py-20 text-[#8C8C8C]">
               <Loader2 className="animate-spin h-10 w-10 text-[#F15A2B] mb-4" />
@@ -354,7 +274,7 @@ export default function PosPage() {
               <p className="text-[#8C8C8C] font-medium text-sm px-4">
                 Menu masih kosong.
                 <br />
-                Silakan tambah menu di Dashboard Owner.
+                Silakan tambah menu di Pengaturan Menu.
               </p>
             </div>
           ) : (
@@ -386,7 +306,7 @@ export default function PosPage() {
                     <div className="flex justify-between items-center mt-auto">
                       <span className="text-[#9A2D0D] font-black text-sm">
                         {item.hasVariants ? "Mulai " : ""}Rp{" "}
-                        {item.price.toLocaleString("id-ID")}
+                        {(item.price / 1000).toFixed(0)}k
                       </span>
                       <button
                         onClick={() => handlePlusClick(item)}
@@ -452,7 +372,7 @@ export default function PosPage() {
                 }
                 className="w-full h-14 bg-[#F15A2B] rounded-full text-lg font-bold shadow-lg"
               >
-                Tambah ke Pesanan - Rp{" "}
+                Tambah - Rp{" "}
                 {((chosenVariant?.price || 0) * variantQty).toLocaleString(
                   "id-ID",
                 )}
@@ -478,7 +398,6 @@ export default function PosPage() {
                   Rp {totalPrice.toLocaleString("id-ID")}
                 </h2>
               </div>
-
               <div className="space-y-3">
                 <p className="text-xs font-bold text-[#8C8C8C] uppercase tracking-wide">
                   Pilih Metode
@@ -499,7 +418,6 @@ export default function PosPage() {
                   </button>
                 </div>
               </div>
-
               <Button
                 onClick={handleCheckout}
                 disabled={isProcessing}
@@ -515,47 +433,145 @@ export default function PosPage() {
           </DialogContent>
         </Dialog>
 
-        {/* NAVBAR BAWAH DINAMIS */}
+        {/* FLOATING CART BUTTON & MODAL KERANJANG */}
+        <Dialog>
+          <DialogTrigger asChild>
+            {/* PERHATIKAN: z-40 sudah diubah menjadi z-[60] di sini 👇 */}
+            <button className="fixed bottom-28 right-6 w-16 h-16 bg-gradient-to-tr from-[#F15A2B] to-[#EC6340] rounded-full shadow-[0_10px_25px_rgba(241,90,43,0.4)] flex items-center justify-center text-white z-[60] hover:scale-105 active:scale-95 transition-all border-4 border-[#FAF7F2]">
+              <ShoppingCart className="h-7 w-7" />
+              {totalItems > 0 && (
+                <Badge className="absolute -top-2 -left-2 bg-[#2D2D2D] text-white rounded-full h-6 w-6 flex items-center justify-center text-[11px] font-black shadow-md border-2 border-white">
+                  {totalItems}
+                </Badge>
+              )}
+            </button>
+          </DialogTrigger>
+          <DialogContent className="w-[90%] max-w-[400px] rounded-[32px] bg-white p-6 border-none shadow-2xl">
+            <DialogHeader>
+              <DialogTitle className="font-heading text-2xl font-bold flex items-center gap-2 text-[#2D2D2D]">
+                <ShoppingCart className="text-[#F15A2B]" /> Pesanan
+              </DialogTitle>
+            </DialogHeader>
+            <ScrollArea className="h-[250px] mt-4 pr-4">
+              {cart.length === 0 ? (
+                <div className="text-center py-10 text-[#8C8C8C] font-medium">
+                  Keranjang Kosong
+                </div>
+              ) : (
+                cart.map((item, i) => (
+                  <div key={i} className="mb-4 border-b border-[#F5EDEB] pb-4">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h4 className="font-bold text-[#2D2D2D]">
+                          {item.name}
+                        </h4>
+                        {item.selectedVariant && (
+                          <p className="text-[10px] font-bold text-[#F15A2B] uppercase tracking-wider">
+                            {item.selectedVariant}
+                          </p>
+                        )}
+                      </div>
+                      <span className="font-bold text-[#2D2D2D]">
+                        Rp {item.totalPrice.toLocaleString("id-ID")}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center mt-2">
+                      <span className="text-xs text-[#8C8C8C]">
+                        @ Rp {item.price.toLocaleString("id-ID")}
+                      </span>
+                      <div className="flex items-center gap-3 bg-[#F5EDEB] rounded-full px-2 py-1">
+                        <button
+                          onClick={() =>
+                            updateQty(item.id, item.selectedVariant, -1)
+                          }
+                          className="bg-white rounded-full p-1 active:scale-90 transition shadow-sm"
+                        >
+                          <Minus size={12} />
+                        </button>
+                        <span className="text-xs font-bold w-4 text-center">
+                          {item.qty}
+                        </span>
+                        <button
+                          onClick={() =>
+                            updateQty(item.id, item.selectedVariant, 1)
+                          }
+                          className="bg-white rounded-full p-1 active:scale-90 transition shadow-sm"
+                        >
+                          <Plus size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </ScrollArea>
+            <div className="mt-4 pt-4 border-t-2 border-dashed border-[#EAEAEA]">
+              <p className="text-xs font-bold text-[#8C8C8C] mb-1 uppercase tracking-wide">
+                Total Tagihan
+              </p>
+              <h2 className="text-3xl font-black text-[#9A2D0D] mb-6">
+                Rp {totalPrice.toLocaleString("id-ID")}
+              </h2>
+              <Button
+                onClick={() => setIsCheckoutOpen(true)}
+                disabled={cart.length === 0}
+                className="w-full h-14 bg-gradient-to-r from-[#F15A2B] to-[#EC6340] rounded-full text-lg font-bold shadow-lg hover:brightness-110 active:scale-95 transition"
+              >
+                Proses Pembayaran
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* NAVBAR BAWAH DINAMIS (5 SLOT UNTUK OWNER, 3 SLOT UNTUK KASIR) */}
         {userRole === "Owner" ? (
           <div className="fixed bottom-0 w-full max-w-[420px] bg-gradient-to-t from-[#FAF7F2] via-[#FAF7F2] to-transparent pt-12 pb-6 px-6 z-50">
             <div className="bg-white shadow-[0_10px_40px_rgba(0,0,0,0.08)] rounded-[32px] p-2 flex justify-between items-center border border-[#F0EBE1] relative h-20">
-              <div className="w-1/4 flex flex-col items-center justify-center relative transition">
-                <div className="absolute -top-14 bg-gradient-to-b from-[#F15A2B] to-[#D23F10] w-16 h-16 rounded-full flex items-center justify-center text-white shadow-[0_8px_20px_rgba(241,90,43,0.4)] border-4 border-[#FAF7F2] animate-in zoom-in-75 slide-in-from-bottom-6 duration-500 ease-out">
-                  <Calculator className="h-7 w-7" />
+              {/* Slot 1: Kasir (AKTIF) */}
+              <div className="w-1/5 flex flex-col items-center justify-center relative transition">
+                <div className="absolute -top-12 bg-gradient-to-b from-[#F15A2B] to-[#D23F10] w-14 h-14 rounded-full flex items-center justify-center text-white shadow-[0_8px_20px_rgba(241,90,43,0.4)] border-4 border-[#FAF7F2] animate-in zoom-in-75 slide-in-from-bottom-6 duration-500 ease-out">
+                  <Calculator className="h-6 w-6" />
                 </div>
-                <span className="mt-8 text-[#9A2D0D] text-[10px] font-extrabold tracking-wide animate-in fade-in duration-500">
+                <span className="mt-8 text-[#9A2D0D] text-[9px] font-extrabold tracking-wide animate-in fade-in duration-500">
                   Kasir
                 </span>
               </div>
               <Link
                 href="/menu"
-                className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/4 hover:text-[#9A2D0D] transition"
+                className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/5 hover:text-[#9A2D0D] transition"
               >
-                <Utensils className="h-6 w-6 mb-1" />
-                <span className="text-[10px] font-bold">Menu</span>
+                <Utensils className="h-5 w-5 mb-1" />
+                <span className="text-[9px] font-bold">Menu</span>
               </Link>
               <Link
                 href="/dashboard"
-                className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/4 hover:text-[#9A2D0D] transition"
+                className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/5 hover:text-[#9A2D0D] transition"
               >
-                <BarChart3 className="h-6 w-6 mb-1" />
-                <span className="text-[10px] font-bold">Laporan</span>
+                <BarChart3 className="h-5 w-5 mb-1" />
+                <span className="text-[9px] font-bold">Laporan</span>
               </Link>
               <Link
                 href="/riwayat"
-                className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/4 hover:text-[#9A2D0D] transition"
+                className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/5 hover:text-[#9A2D0D] transition"
               >
-                <History className="h-6 w-6 mb-1" />
-                <span className="text-[10px] font-bold">Riwayat</span>
+                <History className="h-5 w-5 mb-1" />
+                <span className="text-[9px] font-bold">Riwayat</span>
+              </Link>
+              <Link
+                href="/pengaturan"
+                className="flex flex-col items-center justify-center text-[#8C8C8C] w-1/5 hover:text-[#9A2D0D] transition"
+              >
+                <Settings className="h-5 w-5 mb-1" />
+                <span className="text-[9px] font-bold">Setelan</span>
               </Link>
             </div>
           </div>
         ) : (
-          <div className="fixed bottom-0 w-full max-w-[420px] bg-gradient-to-t from-[#FAF7F2] via-[#FAF7F2] to-transparent pt-10 pb-6 px-6">
+          <div className="fixed bottom-0 w-full max-w-[420px] bg-gradient-to-t from-[#FAF7F2] via-[#FAF7F2] to-transparent pt-10 pb-6 px-6 z-50">
             <div className="bg-white shadow-[0_10px_40px_rgba(0,0,0,0.08)] rounded-[32px] p-2 flex justify-around items-center border border-[#F0EBE1]">
               <div className="flex flex-col items-center justify-center bg-[#F15A2B] text-white rounded-[24px] px-6 py-3 shadow-md animate-in zoom-in-90 duration-300 ease-out">
-                <Calculator className="h-6 w-6 mb-1" />
-                <span className="text-[11px] font-bold tracking-wide">
+                <Calculator className="h-5 w-5 mb-1" />
+                <span className="text-[10px] font-bold tracking-wide">
                   Kasir
                 </span>
               </div>
@@ -563,9 +579,18 @@ export default function PosPage() {
                 href="/riwayat"
                 className="flex flex-col items-center justify-center text-[#8C8C8C] px-6 py-3 hover:text-[#2D2D2D] transition"
               >
-                <History className="h-6 w-6 mb-1" />
-                <span className="text-[11px] font-bold tracking-wide">
+                <History className="h-5 w-5 mb-1" />
+                <span className="text-[10px] font-bold tracking-wide">
                   Riwayat
+                </span>
+              </Link>
+              <Link
+                href="/pengaturan"
+                className="flex flex-col items-center justify-center text-[#8C8C8C] px-6 py-3 hover:text-[#2D2D2D] transition"
+              >
+                <Settings className="h-5 w-5 mb-1" />
+                <span className="text-[10px] font-bold tracking-wide">
+                  Setelan
                 </span>
               </Link>
             </div>
