@@ -61,6 +61,9 @@ export default function RiwayatPage() {
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
 
+  // STATE UNTUK PREVIEW STRUK 58mm
+  const [receiptTrx, setReceiptTrx] = useState<any | null>(null);
+
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       if (user) {
@@ -119,9 +122,17 @@ export default function RiwayatPage() {
     .filter((t) => isToday(t.dateObj))
     .reduce((sum, t) => sum + t.totalAmount, 0);
 
+  // Fungsi Cetak (Simulasi Browser Print)
+  const handlePrint = () => {
+    window.print();
+  };
+
   return (
     <div className="min-h-screen bg-[#E5E5E5] flex justify-center font-sans">
-      <div className="w-full max-w-[420px] bg-[#FAF7F2] min-h-screen relative pb-32 shadow-xl overflow-hidden">
+      {/* Area Utama Aplikasi (disembunyikan saat mau nge-print browser) 
+        class print:hidden memastikan desain web yang melayang tidak ikut ke-print
+      */}
+      <div className="w-full max-w-[420px] bg-[#FAF7F2] min-h-screen relative pb-32 shadow-xl overflow-hidden print:hidden">
         {/* HEADER PERSONALISASI */}
         <div className="flex items-center justify-between p-6 bg-white rounded-b-[40px] shadow-sm mb-6">
           <div className="flex items-center gap-4">
@@ -294,11 +305,12 @@ export default function RiwayatPage() {
                           <Trash2 size={14} /> Batal
                         </Button>
 
+                        {/* TOMBOL LIHAT STRUK DI SINI */}
                         <Button
-                          disabled
-                          className="rounded-full bg-[#CFCFCF] text-white h-9 text-xs font-bold px-4 flex gap-1.5"
+                          onClick={() => setReceiptTrx(trx)}
+                          className="rounded-full bg-[#2D2D2D] hover:bg-black text-white h-9 text-xs font-bold px-4 flex gap-1.5 transition active:scale-95 shadow-md"
                         >
-                          <Printer size={14} /> Struk
+                          <ReceiptText size={14} /> Lihat Struk
                         </Button>
                       </div>
                     </div>
@@ -386,6 +398,106 @@ export default function RiwayatPage() {
           </div>
         )}
       </div>
+
+      {/* MODAL PREVIEW STRUK THERMAL 58mm */}
+      <Dialog
+        open={!!receiptTrx}
+        onOpenChange={(open) => !open && setReceiptTrx(null)}
+      >
+        <DialogContent className="w-[90%] max-w-[320px] rounded-3xl bg-white p-6 border-none shadow-2xl flex flex-col gap-0 items-center">
+          {/* SIMULASI KERTAS STRUK (Font Monospace) */}
+          <div className="w-full font-mono text-[12px] text-black flex flex-col leading-tight pt-2">
+            {/* Header Warung */}
+            <div className="text-center mb-3">
+              <h2 className="font-extrabold text-lg">Ayam Penyet Merr</h2>
+              <p>Jl. Petamburan 4 No. 1</p>
+              <p>Telp: 0812-3456-7890</p>
+            </div>
+
+            <div className="border-b-[1.5px] border-dashed border-black w-full my-2"></div>
+
+            {/* Info Transaksi */}
+            <div className="w-full">
+              <div className="flex justify-between">
+                <span>Waktu</span>
+                <span>
+                  {receiptTrx
+                    ? format(receiptTrx.dateObj, "dd/MM/yy HH:mm")
+                    : ""}
+                </span>
+              </div>
+              <div className="flex justify-between mt-1">
+                <span>Kasir</span>
+                <span>{receiptTrx?.kasirName || userName}</span>
+              </div>
+              <div className="flex justify-between mt-1">
+                <span>No.Ref</span>
+                <span>#{receiptTrx?.id.substring(0, 8).toUpperCase()}</span>
+              </div>
+            </div>
+
+            <div className="border-b-[1.5px] border-dashed border-black w-full my-2"></div>
+
+            {/* Daftar Pesanan */}
+            <div className="w-full flex flex-col gap-2">
+              {receiptTrx?.items.map((item: any, idx: number) => (
+                <div key={idx} className="w-full">
+                  <p className="font-bold">
+                    {item.name} {item.variant ? `(${item.variant})` : ""}
+                  </p>
+                  <div className="flex justify-between mt-1">
+                    <span>
+                      {item.qty} x {item.price.toLocaleString("id-ID")}
+                    </span>
+                    <span>{item.subtotal.toLocaleString("id-ID")}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="border-b-[1.5px] border-dashed border-black w-full my-2"></div>
+
+            {/* Total Pembayaran */}
+            <div className="w-full">
+              <div className="flex justify-between text-sm font-extrabold">
+                <span>TOTAL</span>
+                <span>
+                  Rp {receiptTrx?.totalAmount.toLocaleString("id-ID")}
+                </span>
+              </div>
+              <div className="flex justify-between mt-1">
+                <span>Metode</span>
+                <span>{receiptTrx?.paymentMethod}</span>
+              </div>
+            </div>
+
+            <div className="border-b-[1.5px] border-dashed border-black w-full my-2 mt-4"></div>
+
+            {/* Footer */}
+            <div className="text-center mt-3 text-[10px]">
+              <p>Terima Kasih</p>
+              <p>Selamat Menikmati Hidangan Kami</p>
+            </div>
+          </div>
+
+          {/* Tombol Cetak (Tidak akan ikut tercetak berkat class print:hidden) */}
+          <div className="mt-8 w-full flex flex-col gap-2 print:hidden">
+            <Button
+              onClick={handlePrint}
+              className="w-full h-12 bg-gradient-to-r from-[#F15A2B] to-[#EC6340] rounded-full text-white font-bold shadow-lg hover:brightness-110 transition active:scale-95 flex items-center gap-2"
+            >
+              <Printer size={18} /> Cetak Struk
+            </Button>
+            <Button
+              onClick={() => setReceiptTrx(null)}
+              variant="ghost"
+              className="w-full h-10 rounded-full text-[#8C8C8C] hover:bg-[#F5EDEB] hover:text-[#2D2D2D] transition"
+            >
+              Tutup
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
