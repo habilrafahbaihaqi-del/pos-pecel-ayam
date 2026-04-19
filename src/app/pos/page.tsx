@@ -10,6 +10,9 @@ import {
   onSnapshot,
   addDoc,
   serverTimestamp,
+  doc, // Tambahan untuk update stok
+  updateDoc, // Tambahan untuk update stok
+  increment, // Fungsi canggih Firebase untuk nambah/kurang angka akurat
 } from "firebase/firestore";
 import {
   Dialog,
@@ -34,7 +37,8 @@ import {
   Loader2,
   Banknote,
   QrCode,
-  Settings, // Ikon Pengaturan
+  Settings,
+  AlertCircle, // Ikon peringatan stok
 } from "lucide-react";
 
 type Variant = { name: string; price: number };
@@ -46,6 +50,7 @@ type Product = {
   img: string;
   hasVariants: boolean;
   variants: Variant[];
+  stock: number; // Menambahkan tipe data stok
 };
 type CartItem = Product & {
   qty: number;
@@ -56,13 +61,14 @@ type CartItem = Product & {
 export default function PosPage() {
   const router = useRouter();
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [isCartLoaded, setIsCartLoaded] = useState(false); // Penanda LocalStorage
 
   // STATE NOTIFIKASI (TOAST)
   const [toast, setToast] = useState({ show: false, msg: "" });
 
   const showToast = (msg: string) => {
     setToast({ show: true, msg });
-    setTimeout(() => setToast({ show: false, msg: "" }), 2500); // Hilang otomatis dlm 2.5 detik
+    setTimeout(() => setToast({ show: false, msg: "" }), 2500);
   };
 
   // STATE DATABASE REAL-TIME (Menu)
@@ -88,7 +94,6 @@ export default function PosPage() {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         setUserRole(user.email === "owner@pecelayam.com" ? "Owner" : "Kasir");
-        // Ambil nama dan foto dari Firebase Profile, jika kosong pakai default
         setUserName(
           user.displayName ||
             (user.email === "owner@pecelayam.com" ? "Bos Pecel" : "Kasir"),
@@ -114,8 +119,44 @@ export default function PosPage() {
     return () => unsubscribeDb();
   }, []);
 
+  // 3. MENGAMBIL KERANJANG DARI LOCAL STORAGE (Agar tidak hilang saat pindah halaman)
+  useEffect(() => {
+    const savedCart = localStorage.getItem("pos_cart_v1");
+    if (savedCart) {
+      try {
+        setCart(JSON.parse(savedCart));
+      } catch (error) {
+        console.error("Gagal memuat keranjang", error);
+      }
+    }
+    setIsCartLoaded(true);
+  }, []);
+
+  // 4. MENYIMPAN KERANJANG KE LOCAL STORAGE OTOMATIS
+  useEffect(() => {
+    if (isCartLoaded) {
+      // TRIK AJAIB: Kita buang properti 'img' (Base64 raksasa) sebelum disimpan
+      // agar memori LocalStorage tidak jebol (QuotaExceededError)
+      const cartToSave = cart.map(
+        ({ img, ...itemTanpaGambar }) => itemTanpaGambar,
+      );
+      localStorage.setItem("pos_cart_v1", JSON.stringify(cartToSave));
+    }
+  }, [cart, isCartLoaded]);
+
   // --- LOGIKA KERANJANG ---
   const handlePlusClick = (product: Product) => {
+    // Cek ketersediaan stok sebelum membuka modal / menambah ke keranjang
+    const currentCartQty = cart
+      .filter((c) => c.id === product.id)
+      .reduce((sum, c) => sum + c.qty, 0);
+    const stockAvailable = product.stock || 0;
+
+    if (currentCartQty >= stockAvailable) {
+      showToast(`Stok ${product.name} habis atau tidak mencukupi!`);
+      return;
+    }
+
     if (product.hasVariants && product.variants?.length > 0) {
       setSelectedProduct(product);
       setChosenVariant(product.variants[0]);
@@ -127,6 +168,18 @@ export default function PosPage() {
   };
 
   const addToCart = (product: Product, qty: number, variant?: Variant) => {
+    const currentCartQty = cart
+      .filter((c) => c.id === product.id)
+      .reduce((sum, c) => sum + c.qty, 0);
+    const stockAvailable = product.stock || 0;
+
+    if (currentCartQty + qty > stockAvailable) {
+      showToast(
+        `Sisa stok ${product.name} hanya ${stockAvailable - currentCartQty} pcs!`,
+      );
+      return;
+    }
+
     setCart((prev) => {
       const existing = prev.find((item) =>
         variant
@@ -173,6 +226,20 @@ export default function PosPage() {
     variantName: string | undefined,
     delta: number,
   ) => {
+    // Validasi penambahan kuantitas dengan stok real-time
+    if (delta > 0) {
+      const productInDb = menuItems.find((p) => p.id === id);
+      const currentCartQty = cart
+        .filter((c) => c.id === id)
+        .reduce((sum, c) => sum + c.qty, 0);
+      const stockAvailable = productInDb?.stock || 0;
+
+      if (currentCartQty + delta > stockAvailable) {
+        showToast(`Stok maksimal tercapai! Sisa ${stockAvailable} pcs.`);
+        return;
+      }
+    }
+
     setCart((prev) =>
       prev
         .map((item) =>
@@ -191,12 +258,13 @@ export default function PosPage() {
   const totalItems = cart.reduce((sum, item) => sum + item.qty, 0);
   const totalPrice = cart.reduce((sum, item) => sum + item.totalPrice, 0);
 
-  // --- LOGIKA CHECKOUT ---
+  // --- LOGIKA CHECKOUT & POTONG STOK ---
   const handleCheckout = async () => {
     if (cart.length === 0) return;
     setIsProcessing(true);
 
     try {
+      // 1. Simpan data transaksi
       const transactionData = {
         timestamp: serverTimestamp(),
         items: cart.map((item) => ({
@@ -211,13 +279,32 @@ export default function PosPage() {
         totalItems: totalItems,
         paymentMethod: paymentMethod,
         status: "Berhasil",
-        kasirName: userName, // Menyimpan siapa yang memproses
+        kasirName: userName,
       };
 
       await addDoc(collection(db, "transactions"), transactionData);
+
+      // 2. POTONG STOK OTOMATIS DI DATABASE
+      // Gabungkan jumlah qty per produk (karena 1 produk bisa punya banyak varian di keranjang)
+      const stockDeductions: Record<string, number> = {};
+      cart.forEach((item) => {
+        if (!stockDeductions[item.id]) stockDeductions[item.id] = 0;
+        stockDeductions[item.id] += item.qty;
+      });
+
+      // Lakukan pemotongan menggunakan increment(-)
+      const updatePromises = Object.keys(stockDeductions).map((productId) => {
+        const productRef = doc(db, "products", productId);
+        return updateDoc(productRef, {
+          stock: increment(-stockDeductions[productId]),
+        });
+      });
+      await Promise.all(updatePromises); // Eksekusi update secara bersamaan agar cepat
+
+      // 3. Kosongkan keranjang setelah berhasil
       setCart([]);
       setIsCheckoutOpen(false);
-      showToast("Transaksi Berhasil Disimpan! 🎉");
+      showToast("Transaksi Berhasil & Stok Terpotong! 🎉");
     } catch (err) {
       console.error(err);
       alert("Gagal memproses pembayaran");
@@ -279,45 +366,94 @@ export default function PosPage() {
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-4">
-              {menuItems.map((item) => (
-                <div
-                  key={item.id}
-                  className="bg-white rounded-[32px] p-3 shadow-sm border border-[#F0EBE1]"
-                >
-                  <div className="w-full h-28 bg-[#F8F5F0] rounded-[24px] flex items-center justify-center text-4xl mb-3 overflow-hidden">
-                    {item.img?.startsWith("http") ||
-                    item.img?.startsWith("data:") ? (
-                      <img
-                        src={item.img}
-                        className="w-full h-full object-cover"
-                        alt={item.name}
-                      />
-                    ) : (
-                      <span>{item.img || "🍽️"}</span>
+              {menuItems.map((item) => {
+                const stock = item.stock || 0;
+                const isLowStock = stock <= 5;
+                const isOutOfStock = stock <= 0;
+
+                return (
+                  <div
+                    key={item.id}
+                    // TAMPILAN CARD: Merah jika stok tipis (<= 5)
+                    className={`rounded-[32px] p-3 shadow-sm relative transition-all ${
+                      isLowStock
+                        ? "bg-[#FFF9F8] border-2 border-[#F15A2B]"
+                        : "bg-white border border-[#F0EBE1]"
+                    }`}
+                  >
+                    {isLowStock && !isOutOfStock && (
+                      <div className="absolute -top-2 -right-2 bg-[#F15A2B] text-white p-1.5 rounded-full shadow-md z-10 animate-pulse">
+                        <AlertCircle size={14} strokeWidth={3} />
+                      </div>
                     )}
-                  </div>
-                  <div className="px-1">
-                    <h3 className="font-bold text-[#2D2D2D] text-sm leading-tight mb-1">
-                      {item.name}
-                    </h3>
-                    <p className="text-[10px] text-[#8C8C8C] mb-2">
-                      {item.category}
-                    </p>
-                    <div className="flex justify-between items-center mt-auto">
-                      <span className="text-[#9A2D0D] font-black text-sm">
-                        {item.hasVariants ? "Mulai " : ""}Rp{" "}
-                        {(item.price / 1000).toFixed(0)}k
-                      </span>
-                      <button
-                        onClick={() => handlePlusClick(item)}
-                        className="bg-[#F15A2B] text-white w-8 h-8 flex items-center justify-center rounded-full active:scale-90 transition shadow-md"
+
+                    <div className="w-full h-28 bg-[#F8F5F0] rounded-[24px] flex items-center justify-center text-4xl mb-3 overflow-hidden relative">
+                      {item.img?.startsWith("http") ||
+                      item.img?.startsWith("data:") ? (
+                        <img
+                          src={item.img}
+                          className={`w-full h-full object-cover ${isOutOfStock ? "grayscale opacity-50" : ""}`}
+                          alt={item.name}
+                        />
+                      ) : (
+                        <span
+                          className={isOutOfStock ? "grayscale opacity-50" : ""}
+                        >
+                          {item.img || "🍽️"}
+                        </span>
+                      )}
+
+                      {isOutOfStock && (
+                        <div className="absolute inset-0 bg-black/40 flex items-center justify-center backdrop-blur-[1px]">
+                          <span className="bg-[#2D2D2D] text-white text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest border border-white">
+                            Habis
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="px-1">
+                      <h3 className="font-bold text-[#2D2D2D] text-sm leading-tight mb-1">
+                        {item.name}
+                      </h3>
+                      <p className="text-[10px] text-[#8C8C8C] mb-1">
+                        {item.category}
+                      </p>
+
+                      {/* INDIKATOR STOK */}
+                      <p
+                        className={`text-[10px] font-black uppercase mb-2 ${
+                          isOutOfStock
+                            ? "text-slate-400"
+                            : isLowStock
+                              ? "text-[#F15A2B]"
+                              : "text-[#7A8C4B]"
+                        }`}
                       >
-                        <Plus size={18} strokeWidth={3} />
-                      </button>
+                        Sisa Stok: {stock}
+                      </p>
+
+                      <div className="flex justify-between items-center mt-auto">
+                        <span className="text-[#9A2D0D] font-black text-sm">
+                          {item.hasVariants ? "Mulai " : ""}Rp{" "}
+                          {(item.price / 1000).toFixed(0)}k
+                        </span>
+                        <button
+                          onClick={() => handlePlusClick(item)}
+                          disabled={isOutOfStock}
+                          className={`${
+                            isOutOfStock
+                              ? "bg-[#CFCFCF]"
+                              : "bg-[#F15A2B] active:scale-90 shadow-md"
+                          } text-white w-8 h-8 flex items-center justify-center rounded-full transition`}
+                        >
+                          <Plus size={18} strokeWidth={3} />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -436,7 +572,6 @@ export default function PosPage() {
         {/* FLOATING CART BUTTON & MODAL KERANJANG */}
         <Dialog>
           <DialogTrigger asChild>
-            {/* PERHATIKAN: z-40 sudah diubah menjadi z-[60] di sini 👇 */}
             <button className="fixed bottom-28 right-6 w-16 h-16 bg-gradient-to-tr from-[#F15A2B] to-[#EC6340] rounded-full shadow-[0_10px_25px_rgba(241,90,43,0.4)] flex items-center justify-center text-white z-[60] hover:scale-105 active:scale-95 transition-all border-4 border-[#FAF7F2]">
               <ShoppingCart className="h-7 w-7" />
               {totalItems > 0 && (
@@ -523,11 +658,10 @@ export default function PosPage() {
           </DialogContent>
         </Dialog>
 
-        {/* NAVBAR BAWAH DINAMIS (5 SLOT UNTUK OWNER, 3 SLOT UNTUK KASIR) */}
+        {/* NAVBAR BAWAH DINAMIS */}
         {userRole === "Owner" ? (
           <div className="fixed bottom-0 w-full max-w-[420px] bg-gradient-to-t from-[#FAF7F2] via-[#FAF7F2] to-transparent pt-12 pb-6 px-6 z-50">
             <div className="bg-white shadow-[0_10px_40px_rgba(0,0,0,0.08)] rounded-[32px] p-2 flex justify-between items-center border border-[#F0EBE1] relative h-20">
-              {/* Slot 1: Kasir (AKTIF) */}
               <div className="w-1/5 flex flex-col items-center justify-center relative transition">
                 <div className="absolute -top-12 bg-gradient-to-b from-[#F15A2B] to-[#D23F10] w-14 h-14 rounded-full flex items-center justify-center text-white shadow-[0_8px_20px_rgba(241,90,43,0.4)] border-4 border-[#FAF7F2] animate-in zoom-in-75 slide-in-from-bottom-6 duration-500 ease-out">
                   <Calculator className="h-6 w-6" />

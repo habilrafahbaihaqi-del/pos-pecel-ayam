@@ -49,6 +49,7 @@ type Product = {
   img: string;
   hasVariants: boolean;
   variants: Variant[];
+  stock: number;
 };
 
 const categories = ["Semua", "Makanan", "Minuman", "Sate-satean", "Tambahan"];
@@ -78,6 +79,7 @@ export default function MenuManagementPage() {
     img: "",
     hasVariants: false,
     variants: [],
+    stock: 0,
   });
 
   useEffect(() => {
@@ -128,6 +130,7 @@ export default function MenuManagementPage() {
       img: "",
       hasVariants: false,
       variants: [],
+      stock: 0,
     });
     setIsModalOpen(true);
   };
@@ -163,6 +166,7 @@ export default function MenuManagementPage() {
         img: formData.img,
         hasVariants: formData.hasVariants,
         variants: formData.hasVariants ? formData.variants : [],
+        stock: formData.stock || 0,
       };
 
       if (modalMode === "add") {
@@ -303,6 +307,12 @@ export default function MenuManagementPage() {
                     {p.hasVariants && "Mulai "}Rp{" "}
                     {p.price.toLocaleString("id-ID")}
                   </p>
+                  {/* Tampilan Stok */}
+                  <p
+                    className={`text-[10px] font-bold mt-1 ${p.stock <= 5 ? "text-red-500" : "text-[#7A8C4B]"}`}
+                  >
+                    Stok: {p.stock} Pcs
+                  </p>
                 </div>
                 <div className="flex flex-col gap-2">
                   <button
@@ -391,6 +401,25 @@ export default function MenuManagementPage() {
                         </option>
                       ))}
                   </select>
+                </div>
+
+                {/* TAMBAHAN INPUT STOK AWAL */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-[#8C8C8C] uppercase">
+                    Stok Awal (Porsi/Pcs)
+                  </label>
+                  <Input
+                    type="number"
+                    value={formData.stock || ""}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        stock: parseInt(e.target.value) || 0,
+                      })
+                    }
+                    className="bg-[#F8F5F0] border-none h-12 rounded-2xl focus-visible:ring-1 focus-visible:ring-[#F15A2B]"
+                    placeholder="Contoh: 50"
+                  />
                 </div>
 
                 <div className="flex items-center justify-between bg-[#F8F5F0] p-4 rounded-2xl">

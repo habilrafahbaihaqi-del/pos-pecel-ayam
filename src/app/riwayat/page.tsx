@@ -405,6 +405,9 @@ export default function RiwayatPage() {
         onOpenChange={(open) => !open && setReceiptTrx(null)}
       >
         <DialogContent className="w-[90%] max-w-[320px] rounded-3xl bg-white p-6 border-none shadow-2xl flex flex-col gap-0 items-center">
+          {/* WAJIB ADA AGAR TIDAK ERROR MERAH (Disembunyikan dari layar) */}
+          <DialogTitle className="hidden">Preview Struk</DialogTitle>
+
           {/* SIMULASI KERTAS STRUK (Font Monospace) */}
           <div className="w-full font-mono text-[12px] text-black flex flex-col leading-tight pt-2">
             {/* Header Warung */}

@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { format, subDays, eachDayOfInterval } from "date-fns";
+import { format, subDays, eachDayOfInterval, isToday } from "date-fns";
 import { id as localeId } from "date-fns/locale";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { collection, onSnapshot } from "firebase/firestore";
+import { collection, onSnapshot, doc, getDoc } from "firebase/firestore";
 import {
   Popover,
   PopoverContent,
@@ -30,6 +30,9 @@ import {
   QrCode,
   Loader2,
   Settings,
+  TrendingDown,
+  TrendingUp,
+  Wallet,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -48,12 +51,24 @@ export default function DashboardPage() {
   const [products, setProducts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
+  // STATE BIAYA OPERASIONAL UNTUK KALKULATOR PROFIT
+  const [opCosts, setOpCosts] = useState({
+    sewa: 0,
+    listrik: 0,
+    gaji: 0,
+    lainnya: 0,
+  });
+
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
 
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       if (user) {
-        setUserRole(user.email === "owner@pecelayam.com" ? "Owner" : "Kasir");
+        const role = user.email === "owner@pecelayam.com" ? "Owner" : "Kasir";
+        if (role !== "Owner") {
+          router.push("/pos"); // Jika Kasir nyasar ke mari, usir ke POS
+        }
+        setUserRole(role);
         setUserName(
           user.displayName ||
             (user.email === "owner@pecelayam.com" ? "Bos Pecel" : "Kasir"),
@@ -71,20 +86,34 @@ export default function DashboardPage() {
   }, [router]);
 
   useEffect(() => {
+    // 1. Ambil Transaksi
     const unsubTrx = onSnapshot(collection(db, "transactions"), (snap) => {
-      const data = snap.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-        dateObj: doc.data().timestamp?.toDate() || new Date(),
+      const data = snap.docs.map((document) => ({
+        id: document.id,
+        ...document.data(),
+        dateObj: document.data().timestamp?.toDate() || new Date(),
       }));
       data.sort((a, b) => b.dateObj.getTime() - a.dateObj.getTime());
       setTransactions(data);
       setIsLoading(false);
     });
 
+    // 2. Ambil Produk
     const unsubProd = onSnapshot(collection(db, "products"), (snap) => {
-      setProducts(snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+      setProducts(
+        snap.docs.map((document) => ({ id: document.id, ...document.data() })),
+      );
     });
+
+    // 3. Ambil Biaya Operasional dari Pengaturan
+    const fetchOpCosts = async () => {
+      const docRef = doc(db, "settings", "operational");
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        setOpCosts(docSnap.data() as any);
+      }
+    };
+    fetchOpCosts();
 
     return () => {
       unsubTrx();
@@ -160,6 +189,17 @@ export default function DashboardPage() {
     isPeak: d.realValue === maxDaily && d.realValue > 0,
   }));
 
+  // --- LOGIKA KALKULATOR PROFIT ---
+  const todayRevenue = transactions
+    .filter((t) => isToday(t.dateObj))
+    .reduce((sum, t) => sum + t.totalAmount, 0);
+
+  const totalBulanIni =
+    opCosts.sewa + opCosts.listrik + opCosts.gaji + opCosts.lainnya;
+  const bebanHarian = Math.round(totalBulanIni / 30);
+  const netProfit = todayRevenue - bebanHarian;
+  const isProfit = netProfit >= 0;
+
   return (
     <div className="min-h-screen bg-[#E5E5E5] flex justify-center font-sans">
       <div className="w-full max-w-[420px] bg-[#FAF7F2] min-h-screen relative pb-32 shadow-xl overflow-hidden">
@@ -207,6 +247,66 @@ export default function DashboardPage() {
           </p>
         </div>
 
+        {/* KALKULATOR PROFIT HARIAN (NEW) */}
+        {!isLoading && (
+          <div className="px-6 mb-8">
+            <div
+              className={`rounded-[32px] p-6 shadow-sm border relative overflow-hidden ${isProfit ? "bg-[#F2F8E8] border-[#D5E1A3]" : "bg-[#FFF9F8] border-[#FFD8A8]"}`}
+            >
+              <div className="flex items-center justify-between mb-4 relative z-10">
+                <h3
+                  className={`text-lg font-black font-heading ${isProfit ? "text-[#5C6B2F]" : "text-[#E65100]"}`}
+                >
+                  Laba/Rugi Hari Ini
+                </h3>
+                <div
+                  className={`p-2 rounded-full ${isProfit ? "bg-[#E4F1C7] text-[#5C6B2F]" : "bg-[#FFE0B2] text-[#E65100]"}`}
+                >
+                  <Wallet size={20} />
+                </div>
+              </div>
+
+              <div className="space-y-2 relative z-10">
+                <div className="flex justify-between text-sm font-bold">
+                  <span className="text-[#8C8C8C]">Omzet Penjualan</span>
+                  <span className="text-[#2D2D2D]">
+                    Rp {todayRevenue.toLocaleString("id-ID")}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm font-bold border-b border-black/10 pb-2">
+                  <span className="text-[#8C8C8C]">Beban Operasional</span>
+                  <span className="text-red-500">
+                    - Rp {bebanHarian.toLocaleString("id-ID")}
+                  </span>
+                </div>
+                <div className="flex justify-between pt-2">
+                  <span
+                    className={`text-sm font-black uppercase ${isProfit ? "text-[#5C6B2F]" : "text-[#E65100]"}`}
+                  >
+                    {isProfit ? "Profit Bersih" : "Minus (Belum BEP)"}
+                  </span>
+                  <span
+                    className={`text-2xl font-black ${isProfit ? "text-[#7A8C4B]" : "text-[#F15A2B]"}`}
+                  >
+                    {isProfit ? "+" : ""} Rp {netProfit.toLocaleString("id-ID")}
+                  </span>
+                </div>
+              </div>
+
+              {/* Background Icon */}
+              <div
+                className={`absolute right-[-20px] bottom-[-20px] opacity-10 ${isProfit ? "text-[#7A8C4B]" : "text-[#F15A2B]"}`}
+              >
+                {isProfit ? (
+                  <TrendingUp size={120} />
+                ) : (
+                  <TrendingDown size={120} />
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="px-6 mb-8 flex justify-between items-center gap-3">
           <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
             <PopoverTrigger asChild>
@@ -251,7 +351,7 @@ export default function DashboardPage() {
                   <Banknote size={24} />
                 </div>
                 <p className="text-xs font-bold text-[#8C8C8C] tracking-widest uppercase mb-1">
-                  Total Omzet
+                  Total Omzet (Pilihan Tgl)
                 </p>
                 <h2 className="text-[32px] font-black font-heading text-[#2D2D2D] leading-none">
                   Rp {totalOmzet.toLocaleString("id-ID")}
@@ -381,66 +481,11 @@ export default function DashboardPage() {
                 </div>
               </div>
             </div>
-
-            <div className="px-6 mb-8">
-              <div className="flex items-center gap-2 mb-4">
-                <History className="text-[#9A2D0D]" size={20} />
-                <h3 className="text-xl font-bold font-heading text-[#2D2D2D]">
-                  Transaksi Terbaru
-                </h3>
-              </div>
-
-              <div className="space-y-3">
-                {transactions.length === 0 ? (
-                  <p className="text-center text-sm text-[#8C8C8C]">
-                    Belum ada transaksi.
-                  </p>
-                ) : (
-                  transactions.slice(0, 4).map((trx, idx) => (
-                    <div
-                      key={idx}
-                      className="bg-white rounded-[24px] p-4 flex items-center justify-between shadow-sm border border-[#F0EBE1]"
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-[#FFF4E5] text-[#FF9800] rounded-full flex items-center justify-center font-bold text-[10px]">
-                          #{trx.id.substring(0, 4).toUpperCase()}
-                        </div>
-                        <div>
-                          <h4 className="font-bold text-[#2D2D2D] text-sm">
-                            {trx.items.length > 0
-                              ? trx.items[0].name
-                              : "Pesanan"}{" "}
-                            {trx.items.length > 1 &&
-                              `+${trx.items.length - 1} item`}
-                          </h4>
-                          <p className="text-[#8C8C8C] text-[10px] mt-0.5">
-                            {format(trx.dateObj, "HH:mm")} • {trx.totalItems}{" "}
-                            Item • {trx.paymentMethod}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-bold font-heading text-[#2D2D2D]">
-                          Rp {trx.totalAmount.toLocaleString("id-ID")}
-                        </p>
-                        <div className="flex justify-end mt-1">
-                          {trx.paymentMethod === "QRIS" ? (
-                            <QrCode size={14} className="text-[#8C8C8C]" />
-                          ) : (
-                            <Banknote size={14} className="text-[#8C8C8C]" />
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
           </>
         )}
 
         {/* NAVBAR BAWAH */}
-        {userRole === "Owner" ? (
+        {userRole === "Owner" && (
           <div className="fixed bottom-0 w-full max-w-[420px] bg-gradient-to-t from-[#FAF7F2] via-[#FAF7F2] to-transparent pt-12 pb-6 px-6 z-50">
             <div className="bg-white shadow-[0_10px_40px_rgba(0,0,0,0.08)] rounded-[32px] p-2 flex justify-between items-center border border-[#F0EBE1] relative h-20">
               <Link
@@ -480,38 +525,6 @@ export default function DashboardPage() {
               >
                 <Settings className="h-5 w-5 mb-1" />
                 <span className="text-[9px] font-bold">Setelan</span>
-              </Link>
-            </div>
-          </div>
-        ) : (
-          <div className="fixed bottom-0 w-full max-w-[420px] bg-gradient-to-t from-[#FAF7F2] via-[#FAF7F2] to-transparent pt-10 pb-6 px-6 z-50">
-            <div className="bg-white shadow-[0_10px_40px_rgba(0,0,0,0.08)] rounded-[32px] p-2 flex justify-around items-center border border-[#F0EBE1]">
-              <Link
-                href="/pos"
-                className="flex flex-col items-center justify-center text-[#8C8C8C] px-6 py-3 hover:text-[#2D2D2D] transition"
-              >
-                <Calculator className="h-5 w-5 mb-1" />
-                <span className="text-[10px] font-bold tracking-wide">
-                  Kasir
-                </span>
-              </Link>
-              <Link
-                href="/riwayat"
-                className="flex flex-col items-center justify-center text-[#8C8C8C] px-6 py-3 hover:text-[#2D2D2D] transition"
-              >
-                <History className="h-5 w-5 mb-1" />
-                <span className="text-[10px] font-bold tracking-wide">
-                  Riwayat
-                </span>
-              </Link>
-              <Link
-                href="/pengaturan"
-                className="flex flex-col items-center justify-center text-[#8C8C8C] px-6 py-3 hover:text-[#2D2D2D] transition"
-              >
-                <Settings className="h-5 w-5 mb-1" />
-                <span className="text-[10px] font-bold tracking-wide">
-                  Setelan
-                </span>
               </Link>
             </div>
           </div>
