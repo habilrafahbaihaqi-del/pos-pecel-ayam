@@ -356,9 +356,9 @@ export default function PosPage() {
     <div className="min-h-screen bg-[#E5E5E5] flex justify-center font-sans">
       {/* SCRIPT MIDTRANS (Wajib Ditaruh Di Sini) */}
       <Script
-        src="https://app.sandbox.midtrans.com/snap/snap.js"
+        src="https://app.midtrans.com/snap/snap.js" // Hapus kata .sandbox
         data-client-key={process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY}
-        strategy="lazyOnload"
+        strategy="beforeInteractive" // Ganti dari lazyOnload agar snap siap saat diklik
       />
 
       <div className="w-full max-w-[420px] bg-[#FAF7F2] min-h-screen relative pb-32 shadow-xl overflow-hidden">
