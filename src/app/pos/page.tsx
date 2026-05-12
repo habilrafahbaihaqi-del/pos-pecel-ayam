@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Script from "next/script"; // Wajib untuk Load Midtrans
 import { auth, db } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import {
@@ -10,9 +11,9 @@ import {
   onSnapshot,
   addDoc,
   serverTimestamp,
-  doc, // Tambahan untuk update stok
-  updateDoc, // Tambahan untuk update stok
-  increment, // Fungsi canggih Firebase untuk nambah/kurang angka akurat
+  doc,
+  updateDoc,
+  increment,
 } from "firebase/firestore";
 import {
   Dialog,
@@ -38,7 +39,7 @@ import {
   Banknote,
   QrCode,
   Settings,
-  AlertCircle, // Ikon peringatan stok
+  AlertCircle,
 } from "lucide-react";
 
 type Variant = { name: string; price: number };
@@ -50,7 +51,7 @@ type Product = {
   img: string;
   hasVariants: boolean;
   variants: Variant[];
-  stock: number; // Menambahkan tipe data stok
+  stock: number;
 };
 type CartItem = Product & {
   qty: number;
@@ -61,9 +62,8 @@ type CartItem = Product & {
 export default function PosPage() {
   const router = useRouter();
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [isCartLoaded, setIsCartLoaded] = useState(false); // Penanda LocalStorage
+  const [isCartLoaded, setIsCartLoaded] = useState(false);
 
-  // STATE NOTIFIKASI (TOAST)
   const [toast, setToast] = useState({ show: false, msg: "" });
 
   const showToast = (msg: string) => {
@@ -71,16 +71,13 @@ export default function PosPage() {
     setTimeout(() => setToast({ show: false, msg: "" }), 2500);
   };
 
-  // STATE DATABASE REAL-TIME (Menu)
   const [menuItems, setMenuItems] = useState<Product[]>([]);
   const [isLoadingMenu, setIsLoadingMenu] = useState(true);
 
-  // STATE PERAN & PROFIL
   const [userRole, setUserRole] = useState("Kasir");
   const [userName, setUserName] = useState("Kasir");
   const [userPhoto, setUserPhoto] = useState("");
 
-  // STATE MODAL
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [chosenVariant, setChosenVariant] = useState<Variant | null>(null);
   const [variantQty, setVariantQty] = useState(1);
@@ -89,7 +86,6 @@ export default function PosPage() {
   const [paymentMethod, setPaymentMethod] = useState<"Tunai" | "QRIS">("Tunai");
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // 1. MENDETEKSI USER SAAT INI
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
@@ -106,7 +102,6 @@ export default function PosPage() {
     return () => unsubscribe();
   }, [router]);
 
-  // 2. MENGAMBIL DATA MENU DARI FIREBASE
   useEffect(() => {
     const unsubscribeDb = onSnapshot(collection(db, "products"), (snapshot) => {
       const productsData = snapshot.docs.map((doc) => ({
@@ -119,7 +114,6 @@ export default function PosPage() {
     return () => unsubscribeDb();
   }, []);
 
-  // 3. MENGAMBIL KERANJANG DARI LOCAL STORAGE (Agar tidak hilang saat pindah halaman)
   useEffect(() => {
     const savedCart = localStorage.getItem("pos_cart_v1");
     if (savedCart) {
@@ -132,11 +126,8 @@ export default function PosPage() {
     setIsCartLoaded(true);
   }, []);
 
-  // 4. MENYIMPAN KERANJANG KE LOCAL STORAGE OTOMATIS
   useEffect(() => {
     if (isCartLoaded) {
-      // TRIK AJAIB: Kita buang properti 'img' (Base64 raksasa) sebelum disimpan
-      // agar memori LocalStorage tidak jebol (QuotaExceededError)
       const cartToSave = cart.map(
         ({ img, ...itemTanpaGambar }) => itemTanpaGambar,
       );
@@ -144,9 +135,7 @@ export default function PosPage() {
     }
   }, [cart, isCartLoaded]);
 
-  // --- LOGIKA KERANJANG ---
   const handlePlusClick = (product: Product) => {
-    // Cek ketersediaan stok sebelum membuka modal / menambah ke keranjang
     const currentCartQty = cart
       .filter((c) => c.id === product.id)
       .reduce((sum, c) => sum + c.qty, 0);
@@ -226,7 +215,6 @@ export default function PosPage() {
     variantName: string | undefined,
     delta: number,
   ) => {
-    // Validasi penambahan kuantitas dengan stok real-time
     if (delta > 0) {
       const productInDb = menuItems.find((p) => p.id === id);
       const currentCartQty = cart
@@ -258,63 +246,121 @@ export default function PosPage() {
   const totalItems = cart.reduce((sum, item) => sum + item.qty, 0);
   const totalPrice = cart.reduce((sum, item) => sum + item.totalPrice, 0);
 
-  // --- LOGIKA CHECKOUT & POTONG STOK ---
+  // --- LOGIKA MENYIMPAN KE FIREBASE ---
+  const saveToFirebase = async (orderId: string) => {
+    const transactionData = {
+      id: orderId, // Kita simpan Order ID dari Midtrans
+      timestamp: serverTimestamp(),
+      items: cart.map((item) => ({
+        id: item.id,
+        name: item.name,
+        qty: item.qty,
+        variant: item.selectedVariant || null,
+        price: item.price,
+        subtotal: item.totalPrice,
+      })),
+      totalAmount: totalPrice,
+      totalItems: totalItems,
+      paymentMethod: paymentMethod,
+      status: "Berhasil",
+      kasirName: userName,
+    };
+
+    await addDoc(collection(db, "transactions"), transactionData);
+
+    const stockDeductions: Record<string, number> = {};
+    cart.forEach((item) => {
+      if (!stockDeductions[item.id]) stockDeductions[item.id] = 0;
+      stockDeductions[item.id] += item.qty;
+    });
+
+    const updatePromises = Object.keys(stockDeductions).map((productId) => {
+      const productRef = doc(db, "products", productId);
+      return updateDoc(productRef, {
+        stock: increment(-stockDeductions[productId]),
+      });
+    });
+    await Promise.all(updatePromises);
+
+    setCart([]);
+    setIsCheckoutOpen(false);
+    showToast("Transaksi Berhasil & Stok Terpotong! 🎉");
+  };
+
+  // --- LOGIKA CHECKOUT (MIDTRANS / TUNAI) ---
   const handleCheckout = async () => {
     if (cart.length === 0) return;
     setIsProcessing(true);
 
     try {
-      // 1. Simpan data transaksi
-      const transactionData = {
-        timestamp: serverTimestamp(),
-        items: cart.map((item) => ({
-          id: item.id,
-          name: item.name,
-          qty: item.qty,
-          variant: item.selectedVariant || null,
-          price: item.price,
-          subtotal: item.totalPrice,
-        })),
-        totalAmount: totalPrice,
-        totalItems: totalItems,
-        paymentMethod: paymentMethod,
-        status: "Berhasil",
-        kasirName: userName,
-      };
+      const orderId = `TRX-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
-      await addDoc(collection(db, "transactions"), transactionData);
-
-      // 2. POTONG STOK OTOMATIS DI DATABASE
-      // Gabungkan jumlah qty per produk (karena 1 produk bisa punya banyak varian di keranjang)
-      const stockDeductions: Record<string, number> = {};
-      cart.forEach((item) => {
-        if (!stockDeductions[item.id]) stockDeductions[item.id] = 0;
-        stockDeductions[item.id] += item.qty;
-      });
-
-      // Lakukan pemotongan menggunakan increment(-)
-      const updatePromises = Object.keys(stockDeductions).map((productId) => {
-        const productRef = doc(db, "products", productId);
-        return updateDoc(productRef, {
-          stock: increment(-stockDeductions[productId]),
+      if (paymentMethod === "QRIS") {
+        // 1. Tembak API Midtrans yang barusan kita buat
+        const res = await fetch("/api/midtrans", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            order_id: orderId,
+            gross_amount: totalPrice,
+            items: cart.map((item) => ({
+              id: item.id,
+              price: item.price,
+              quantity: item.qty,
+              name: item.name.substring(0, 50), // Midtrans maksimal 50 karakter
+            })),
+            customer_name: userName,
+          }),
         });
-      });
-      await Promise.all(updatePromises); // Eksekusi update secara bersamaan agar cepat
 
-      // 3. Kosongkan keranjang setelah berhasil
-      setCart([]);
-      setIsCheckoutOpen(false);
-      showToast("Transaksi Berhasil & Stok Terpotong! 🎉");
+        const data = await res.json();
+
+        if (data.token) {
+          // 2. Jika dapat token, buka Popup Snap Midtrans
+          (window as any).snap.pay(data.token, {
+            onSuccess: async function () {
+              // JIKA CUSTOMER SUKSES BAYAR/SCAN QRIS
+              await saveToFirebase(orderId);
+              setIsProcessing(false);
+            },
+            onPending: function () {
+              showToast("Pembayaran tertunda/menunggu.");
+              setIsProcessing(false);
+            },
+            onError: function () {
+              alert("Pembayaran Gagal!");
+              setIsProcessing(false);
+            },
+            onClose: function () {
+              showToast("Popup ditutup tanpa menyelesaikan pembayaran.");
+              setIsProcessing(false);
+            },
+          });
+        } else {
+          alert("Gagal mendapatkan token QRIS dari Midtrans.");
+          setIsProcessing(false);
+        }
+      } else {
+        // JIKA TUNAI, LANGSUNG SIMPAN
+        await saveToFirebase(orderId);
+        setIsProcessing(false);
+      }
     } catch (err) {
       console.error(err);
-      alert("Gagal memproses pembayaran");
-    } finally {
+      alert("Terjadi kesalahan pada sistem pembayaran.");
       setIsProcessing(false);
     }
   };
 
   return (
     <div className="min-h-screen bg-[#E5E5E5] flex justify-center font-sans">
+      {/* SCRIPT MIDTRANS (Wajib Ditaruh Di Sini) */}
+      <Script
+        src="https://app.sandbox.midtrans.com/snap/snap.js"
+        data-client-key={process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY}
+        strategy="lazyOnload"
+      />
+
       <div className="w-full max-w-[420px] bg-[#FAF7F2] min-h-screen relative pb-32 shadow-xl overflow-hidden">
         {/* NOTIFIKASI TOAST */}
         {toast.show && (
@@ -348,7 +394,7 @@ export default function PosPage() {
           </div>
         </div>
 
-        {/* KONTEN MENU DARI FIREBASE */}
+        {/* KONTEN MENU */}
         <div className="px-6 pb-6 mt-4">
           {isLoadingMenu ? (
             <div className="flex flex-col items-center justify-center py-20 text-[#8C8C8C]">
@@ -360,8 +406,6 @@ export default function PosPage() {
               <Utensils size={40} className="mx-auto text-[#CFCFCF] mb-3" />
               <p className="text-[#8C8C8C] font-medium text-sm px-4">
                 Menu masih kosong.
-                <br />
-                Silakan tambah menu di Pengaturan Menu.
               </p>
             </div>
           ) : (
@@ -374,7 +418,6 @@ export default function PosPage() {
                 return (
                   <div
                     key={item.id}
-                    // TAMPILAN CARD: Merah jika stok tipis (<= 5)
                     className={`rounded-[32px] p-3 shadow-sm relative transition-all ${
                       isLowStock
                         ? "bg-[#FFF9F8] border-2 border-[#F15A2B]"
@@ -420,7 +463,6 @@ export default function PosPage() {
                         {item.category}
                       </p>
 
-                      {/* INDIKATOR STOK */}
                       <p
                         className={`text-[10px] font-black uppercase mb-2 ${
                           isOutOfStock
@@ -461,6 +503,7 @@ export default function PosPage() {
         {/* MODAL PILIH VARIAN */}
         <Dialog open={isVariantOpen} onOpenChange={setIsVariantOpen}>
           <DialogContent className="w-[90%] max-w-[400px] rounded-[32px] bg-white p-6 border-none shadow-2xl">
+            <DialogTitle className="hidden">Varian</DialogTitle>
             <DialogHeader>
               <DialogTitle className="text-xl font-black text-[#2D2D2D]">
                 Pilih Varian
@@ -520,6 +563,7 @@ export default function PosPage() {
         {/* MODAL KONFIRMASI PEMBAYARAN (CHECKOUT) */}
         <Dialog open={isCheckoutOpen} onOpenChange={setIsCheckoutOpen}>
           <DialogContent className="w-[90%] max-w-[400px] rounded-[32px] bg-white p-6 border-none shadow-2xl">
+            <DialogTitle className="hidden">Checkout</DialogTitle>
             <DialogHeader>
               <DialogTitle className="text-xl font-black text-[#2D2D2D]">
                 Konfirmasi Bayar
@@ -550,7 +594,8 @@ export default function PosPage() {
                     onClick={() => setPaymentMethod("QRIS")}
                     className={`p-4 rounded-2xl border-2 flex flex-col items-center gap-2 transition-all active:scale-95 ${paymentMethod === "QRIS" ? "border-[#F15A2B] bg-[#F5EDEB] text-[#9A2D0D]" : "border-[#EAEAEA] text-[#8C8C8C]"}`}
                   >
-                    <QrCode size={24} /> <span className="font-bold">QRIS</span>
+                    <QrCode size={24} />{" "}
+                    <span className="font-bold">QRIS / E-Wallet</span>
                   </button>
                 </div>
               </div>
@@ -561,6 +606,8 @@ export default function PosPage() {
               >
                 {isProcessing ? (
                   <Loader2 className="animate-spin" />
+                ) : paymentMethod === "QRIS" ? (
+                  "Buka QRIS"
                 ) : (
                   "Selesaikan Pesanan"
                 )}
@@ -582,6 +629,7 @@ export default function PosPage() {
             </button>
           </DialogTrigger>
           <DialogContent className="w-[90%] max-w-[400px] rounded-[32px] bg-white p-6 border-none shadow-2xl">
+            <DialogTitle className="hidden">Keranjang</DialogTitle>
             <DialogHeader>
               <DialogTitle className="font-heading text-2xl font-bold flex items-center gap-2 text-[#2D2D2D]">
                 <ShoppingCart className="text-[#F15A2B]" /> Pesanan
